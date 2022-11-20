@@ -195,17 +195,10 @@ impl Cursor<'_> {
 
     fn double_quoted_string(&mut self) -> bool {
         debug_assert!(self.prev() == '"');
-        // TODO: there's probably some bugs in here
         while let Some(c) = self.bump() {
             match c {
                 '"' => {
                     return true;
-                }
-                '\n' => {
-                    return false;
-                }
-                '\r' => {
-                    return false;
                 }
                 '\\' if self.first() == '\\' || self.first() == '"' => {
                     self.bump();
