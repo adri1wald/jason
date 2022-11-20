@@ -1,221 +1,124 @@
-mod cursor;
+mod base;
+mod token;
 
-pub use cursor::Cursor;
+use base::Cursor;
+use token::{Span, Token, TokenKind};
 
-use self::TokenKind::*;
+pub fn tokenize(input: &str) -> impl Iterator<Item = (Token, bool)> + '_ {
+    let mut tokenizer = Tokenizer::new(input);
 
-#[derive(Debug, PartialEq)]
-pub struct Token {
-    pub kind: TokenKind,
-    pub len: u32,
-}
-
-impl Token {
-    fn new(kind: TokenKind, len: u32) -> Self {
-        Self { kind, len }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum TokenKind {
-    Integer,
-    Decimal,
-    QuotedString {
-        terminated: bool,
-    },
-    OpenBracket,
-    CloseBracket,
-    OpenSquare,
-    CloseSquare,
-    Colon,
-    Comma,
-    True,
-    False,
-    Null,
-    Whitespace,
-    /// Not part of spec
-    Eof,
-    Unknown,
-}
-
-/// Creates an iterator that produces tokens from the input string
-pub fn tokenize(input: &str) -> impl Iterator<Item = Token> + '_ {
-    let mut cursor = Cursor::new(input);
     std::iter::from_fn(move || {
-        let token = cursor.advance_token();
-        if token.kind != Eof {
-            Some(token)
+        let (token, whitespace) = tokenizer.next_token();
+        if token.kind != token::Eof {
+            Some((token, whitespace))
         } else {
             None
         }
     })
 }
 
-impl Cursor<'_> {
-    pub fn advance_token(&mut self) -> Token {
-        let first_char = match self.bump() {
-            Some(c) => c,
-            None => return Token::new(Eof, 0),
-        };
-        let token_kind = match first_char {
-            // Whitespace sequence.
-            c if c.is_whitespace() => self.whitespace(),
-
-            // Numeric literal.
-            c @ '0'..='9' => self.number(c),
-            '-' => {
-                match self.first() {
-                    '0'..='9' => {
-                        // correctness: first() returned a non-eof char so there will be one.
-                        let c = self.bump().unwrap();
-                        self.number(c)
-                    }
-                    _ => return Token::new(Unknown, 1),
-                }
-            }
-
-            '{' => OpenBracket,
-            '}' => CloseBracket,
-            '[' => OpenSquare,
-            ']' => CloseSquare,
-            ':' => Colon,
-            ',' => Comma,
-
-            // String literal.
-            '"' => {
-                let terminated = self.double_quoted_string();
-                QuotedString { terminated }
-            }
-            _ => Unknown,
-        };
-
-        let tok = Token::new(token_kind, self.pos_within_token());
-        self.reset_pos_within_token();
-        tok
-    }
-
-    fn whitespace(&mut self) -> TokenKind {
-        debug_assert!(self.prev().is_whitespace());
-        self.eat_while(|ch| ch.is_whitespace());
-        Whitespace
-    }
-
-    fn number(&mut self, first_digit: char) -> TokenKind {
-        debug_assert!('0' <= self.prev() && self.prev() <= '9');
-
-        if first_digit == '0' {
-            let has_digits = match self.first() {
-                '.' => match self.second() {
-                    '0'..='9' => true,
-                    _ => false,
-                },
-                'e' | 'E' => match self.second() {
-                    '0'..='9' => true,
-                    '+' | '-' => match self.third() {
-                        '0'..='9' => true,
-                        _ => false,
-                    },
-                    _ => false,
-                },
-                _ => false,
-            };
-            if !has_digits {
-                // Just a 0.
-                // E.g. JSON spec says `000` and `001` are invalid.
-                return Integer;
-            }
-        } else {
-            self.eat_decimal_digits();
-        }
-
-        match self.first() {
-            '.' => match self.second() {
-                '0'..='9' => {
-                    self.bump();
-                    self.eat_decimal_digits();
-                    match self.first() {
-                        'e' | 'E' => match self.second() {
-                            '0'..='9' => {
-                                self.bump();
-                                self.eat_decimal_digits();
-                                Decimal
-                            }
-                            '+' | '-' => match self.third() {
-                                '0'..='9' => {
-                                    self.bump();
-                                    self.bump();
-                                    self.eat_decimal_digits();
-                                    Decimal
-                                }
-                                _ => Decimal,
-                            },
-                            _ => Decimal,
-                        },
-                        _ => Decimal,
-                    }
-                }
-                _ => Integer,
-            },
-            'e' | 'E' => match self.second() {
-                '0'..='9' => {
-                    self.bump();
-                    self.eat_decimal_digits();
-                    Decimal
-                }
-                '+' | '-' => match self.third() {
-                    '0'..='9' => {
-                        self.bump();
-                        self.bump();
-                        self.eat_decimal_digits();
-                        Decimal
-                    }
-                    _ => Integer,
-                },
-                _ => Integer,
-            },
-            _ => Integer,
-        }
-    }
-
-    fn double_quoted_string(&mut self) -> bool {
-        debug_assert!(self.prev() == '"');
-        while let Some(c) = self.bump() {
-            match c {
-                '"' => {
-                    return true;
-                }
-                '\n' => {
-                    return false;
-                }
-                '\r' => {
-                    return false;
-                }
-                '\\' if self.first() == '\\' || self.first() == '"' => {
-                    self.bump();
-                }
-                _ => (),
-            }
-        }
-        // End of file reached.
-        false
-    }
-
-    fn eat_decimal_digits(&mut self) -> bool {
-        let mut has_digits = false;
-        loop {
-            match self.first() {
-                '0'..='9' => {
-                    has_digits = true;
-                    self.bump();
-                }
-                _ => break,
-            }
-        }
-        has_digits
-    }
+struct Tokenizer<'a> {
+    pos: usize,
+    input: &'a str,
+    cursor: Cursor<'a>,
 }
 
-// Tests.
+impl<'a> Tokenizer<'a> {
+    fn new(input: &'a str) -> Self {
+        Self {
+            pos: 0,
+            input,
+            cursor: Cursor::new(&input),
+        }
+    }
+
+    /// Returns the next token, paired with a bool indicating if the token was
+    /// preceded by whitespace.
+    fn next_token(&mut self) -> (Token, bool) {
+        let mut preceded_by_whitespace = false;
+
+        loop {
+            let token = self.cursor.advance_token();
+            let start = self.pos;
+            self.pos = self.pos + token.len;
+
+            let kind = match token.kind {
+                // Whitespace: skip.
+                base::TokenKind::Whitespace => {
+                    preceded_by_whitespace = true;
+                    continue;
+                }
+
+                // Identifier.
+                base::TokenKind::Ident => self.cook_base_ident(start),
+
+                // Integer.
+                base::TokenKind::Integer => self.cook_base_integer(start),
+
+                // Decimal.
+                base::TokenKind::Decimal => self.cook_base_decimal(start),
+
+                // Quoted string.
+                base::TokenKind::QuotedString { terminated } => {
+                    self.cook_base_quoted_string(start, terminated)
+                }
+
+                base::TokenKind::OpenBracket => token::OpenBracket,
+                base::TokenKind::CloseBracket => token::CloseBracket,
+                base::TokenKind::OpenSquare => token::OpenSquare,
+                base::TokenKind::CloseSquare => token::CloseSquare,
+                base::TokenKind::Colon => token::Colon,
+                base::TokenKind::Comma => token::Comma,
+
+                base::TokenKind::Unknown => self.cook_base_unknown(start),
+                base::TokenKind::Eof => token::Eof,
+            };
+            let span = Span::new(start, self.pos);
+            return (Token::new(kind, span), preceded_by_whitespace);
+        }
+    }
+
+    fn cook_base_ident(&self, start: usize) -> TokenKind {
+        let slice = self.str_from(start);
+        match slice {
+            "true" => token::True,
+            "false" => token::False,
+            "null" => token::Null,
+            ident => token::InvalidIdent(ident.to_owned()),
+        }
+    }
+
+    fn cook_base_integer(&self, start: usize) -> TokenKind {
+        let slice = self.str_from(start);
+        token::Integer(slice.parse().unwrap())
+    }
+
+    fn cook_base_decimal(&self, start: usize) -> TokenKind {
+        let slice = self.str_from(start);
+        token::Decimal(slice.parse().unwrap())
+    }
+
+    fn cook_base_quoted_string(&self, start: usize, terminated: bool) -> TokenKind {
+        let start = start + 1;
+        let end = if terminated { self.pos - 1 } else { self.pos };
+        let slice = self.str_from_to(start, end);
+        // TODO: parse and label unterminated
+        token::QuotedString(slice.to_owned())
+    }
+
+    fn cook_base_unknown(&self, start: usize) -> TokenKind {
+        let slice = self.str_from(start);
+        token::Unknown(slice.to_owned())
+    }
+
+    fn str_from(&self, start: usize) -> &str {
+        self.str_from_to(start, self.pos)
+    }
+
+    fn str_from_to(&self, start: usize, end: usize) -> &str {
+        &self.input[start..end]
+    }
+}
 
 macro_rules! tokenize_test {
     ($name:ident, $input:expr, $tokens:expr) => {
@@ -233,77 +136,122 @@ macro_rules! tokenize_test {
     };
 }
 
-// Numeric literal tests.
-
-tokenize_test!(it_tokenizes_an_integer, "420", [Token::new(Integer, 3)]);
+// Identifier tests.
 
 tokenize_test!(
-    it_tokenizes_a_negative_integer,
-    "-1600",
-    [Token::new(Integer, 5)]
+    it_tokenizes_true,
+    "true",
+    [(Token::new(token::True, Span::new(0, 4)), false)]
+);
+
+tokenize_test!(
+    it_tokenizes_false,
+    "false",
+    [(Token::new(token::False, Span::new(0, 5)), false)]
+);
+
+tokenize_test!(
+    it_tokenizes_null,
+    "null",
+    [(Token::new(token::Null, Span::new(0, 4)), false)]
+);
+
+tokenize_test!(
+    it_tokenizes_invalid_ident,
+    "potato",
+    [(
+        Token::new(token::InvalidIdent("potato".to_owned()), Span::new(0, 6)),
+        false
+    )]
+);
+
+// Numeric literal tests.
+
+tokenize_test!(
+    it_tokenizes_an_integer,
+    "420",
+    [(Token::new(token::Integer(420), Span::new(0, 3)), false)]
 );
 
 tokenize_test!(
     it_tokenizes_an_integer_with_space_around,
     " 69\n \r",
-    [
-        Token::new(Whitespace, 1),
-        Token::new(Integer, 2),
-        Token::new(Whitespace, 3)
-    ]
+    [(Token::new(token::Integer(69), Span::new(1, 3)), true)]
 );
 
-tokenize_test!(it_tokenizes_a_decimal, "3.14", [Token::new(Decimal, 4)]);
+tokenize_test!(
+    it_tokenizes_a_decimal,
+    "3.14",
+    [(Token::new(token::Decimal(3.14), Span::new(0, 4)), false)]
+);
 
 tokenize_test!(
     it_tokenizes_a_negative_decimal,
     "-0.618",
-    [Token::new(Decimal, 6)]
+    [(Token::new(token::Decimal(-0.618), Span::new(0, 6)), false)]
 );
 
 tokenize_test!(
     it_tokenizes_two_zeros,
     "00",
-    [Token::new(Integer, 1), Token::new(Integer, 1)]
+    [
+        (Token::new(token::Integer(0), Span::new(0, 1)), false),
+        (Token::new(token::Integer(0), Span::new(1, 2)), false)
+    ]
 );
 
 tokenize_test!(
     it_tokenizes_a_integer_with_lone_period,
     "1.",
-    [Token::new(Integer, 1), Token::new(Unknown, 1)]
+    [
+        (Token::new(token::Integer(1), Span::new(0, 1)), false),
+        (
+            Token::new(token::Unknown(".".to_owned()), Span::new(1, 2)),
+            false
+        )
+    ]
 );
 
 tokenize_test!(
     it_tokenizes_a_number_with_expontent,
     "0E000",
-    [Token::new(Decimal, 5)]
+    [(Token::new(token::Decimal(0f64), Span::new(0, 5)), false)]
 );
 
 tokenize_test!(
     it_tokenizes_a_number_with_negative_expontent,
     "1.125e-5",
-    [Token::new(Decimal, 8)]
+    [(Token::new(token::Decimal(1.125e-5), Span::new(0, 8)), false)]
 );
 
 tokenize_test!(
     it_tokenizes_a_number_with_positive_expontent,
     "-5e+20",
-    [Token::new(Decimal, 6)]
+    [(Token::new(token::Decimal(-5e+20), Span::new(0, 6)), false)]
 );
 
 tokenize_test!(
     it_tokenizes_a_number_with_lone_expontent,
     "-0.12E",
-    [Token::new(Decimal, 5), Token::new(Unknown, 1)]
+    [
+        (Token::new(token::Decimal(-0.12), Span::new(0, 5)), false),
+        (
+            Token::new(token::InvalidIdent("E".to_owned()), Span::new(5, 6)),
+            false
+        )
+    ]
 );
 
 tokenize_test!(
     it_tokenizes_a_number_with_decimal_expontent,
     "12.0e1.0",
     [
-        Token::new(Decimal, 6),
-        Token::new(Unknown, 1),
-        Token::new(Integer, 1)
+        (Token::new(token::Decimal(12.0e1), Span::new(0, 6)), false),
+        (
+            Token::new(token::Unknown(".".to_owned()), Span::new(6, 7)),
+            false
+        ),
+        (Token::new(token::Integer(0), Span::new(7, 8)), false)
     ]
 );
 
@@ -312,38 +260,50 @@ tokenize_test!(
 tokenize_test!(
     it_tokenizes_the_empty_string,
     "\"\"",
-    [Token::new(QuotedString { terminated: true }, 2)]
+    [(
+        Token::new(token::QuotedString("".to_owned()), Span::new(0, 2)),
+        false
+    )]
 );
 
-tokenize_test!(
-    it_tokenizes_a_string_with_linefeed,
-    "\"\n\"",
-    [
-        Token::new(QuotedString { terminated: false }, 2),
-        Token::new(QuotedString { terminated: false }, 1)
-    ]
-);
-
-tokenize_test!(
-    it_tokenizes_a_string_with_carriage_return,
-    "\"\r\"",
-    [
-        Token::new(QuotedString { terminated: false }, 2),
-        Token::new(QuotedString { terminated: false }, 1)
-    ]
-);
-
+// TODO: FIXME: escaping
 tokenize_test!(
     it_tokenizes_a_string_with_an_escaped_quote,
     "\"\\\"\"",
-    [Token::new(QuotedString { terminated: true }, 4)]
+    [(
+        Token::new(token::QuotedString("\\\"".to_owned()), Span::new(0, 4)),
+        false
+    )]
 );
 
+// Full tests.
+
 tokenize_test!(
-    it_tokenizes_a_string_with_an_unescaped_quote,
-    "\"\"\"",
+    it_tokenizes_an_array_of_objects,
+    "[{ \"name\": \"Adrien\", \"age\": 23, \"hungry\": true, \"health\": 0.9, \"girlfriend\": null }]",
     [
-        Token::new(QuotedString { terminated: true }, 2),
-        Token::new(QuotedString { terminated: false }, 1)
+        (Token::new(token::OpenSquare, Span::new(0, 1)), false),
+        (Token::new(token::OpenBracket, Span::new(1, 2)), false),
+        (Token::new(token::QuotedString("name".into()), Span::new(3, 9)), true),
+        (Token::new(token::Colon, Span::new(9, 10)), false),
+        (Token::new(token::QuotedString("Adrien".into()), Span::new(11, 19)), true),
+        (Token::new(token::Comma, Span::new(19, 20)), false),
+        (Token::new(token::QuotedString("age".into()), Span::new(21, 26)), true),
+        (Token::new(token::Colon, Span::new(26, 27)), false),
+        (Token::new(token::Integer(23), Span::new(28, 30)), true),
+        (Token::new(token::Comma, Span::new(30, 31)), false),
+        (Token::new(token::QuotedString("hungry".into()), Span::new(32, 40)), true),
+        (Token::new(token::Colon, Span::new(40, 41)), false),
+        (Token::new(token::True, Span::new(42, 46)), true),
+        (Token::new(token::Comma, Span::new(46, 47)), false),
+        (Token::new(token::QuotedString("health".into()), Span::new(48, 56)), true),
+        (Token::new(token::Colon, Span::new(56, 57)), false),
+        (Token::new(token::Decimal(0.9), Span::new(58, 61)), true),
+        (Token::new(token::Comma, Span::new(61, 62)), false),
+        (Token::new(token::QuotedString("girlfriend".into()), Span::new(63, 75)), true),
+        (Token::new(token::Colon, Span::new(75, 76)), false),
+        (Token::new(token::Null, Span::new(77, 81)), true),
+        (Token::new(token::CloseBracket, Span::new(82, 83)), true),
+        (Token::new(token::CloseSquare, Span::new(83, 84)), false),
     ]
 );

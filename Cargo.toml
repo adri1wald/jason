@@ -7,3 +7,4 @@ edition = "2021"
 
 [dependencies]
 anyhow = "1.0.66"
+unicode-xid = "0.2.4"

@@ -62,8 +62,8 @@ impl<'a> Cursor<'a> {
         self.chars.as_str().is_empty()
     }
 
-    pub(crate) fn pos_within_token(&self) -> u32 {
-        (self.len_remaining - self.chars.as_str().len()) as u32
+    pub(crate) fn pos_within_token(&self) -> usize {
+        self.len_remaining - self.chars.as_str().len()
     }
 
     pub(crate) fn reset_pos_within_token(&mut self) {
