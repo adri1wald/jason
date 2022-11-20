@@ -20,7 +20,9 @@ impl Token {
 pub enum TokenKind {
     Integer,
     Decimal,
-    QuotedString,
+    QuotedString {
+        terminated: bool,
+    },
     OpenBracket,
     CloseBracket,
     OpenSquare,
@@ -81,7 +83,8 @@ impl Cursor<'_> {
 
             // String literal.
             '"' => {
-                todo!()
+                let terminated = self.double_quoted_string();
+                QuotedString { terminated }
             }
             _ => Unknown,
         };
@@ -172,6 +175,29 @@ impl Cursor<'_> {
             },
             _ => Integer,
         }
+    }
+
+    fn double_quoted_string(&mut self) -> bool {
+        debug_assert!(self.prev() == '"');
+        while let Some(c) = self.bump() {
+            match c {
+                '"' => {
+                    return true;
+                }
+                '\n' => {
+                    return false;
+                }
+                '\r' => {
+                    return false;
+                }
+                '\\' if self.first() == '\\' || self.first() == '"' => {
+                    self.bump();
+                }
+                _ => (),
+            }
+        }
+        // End of file reached.
+        false
     }
 
     fn eat_decimal_digits(&mut self) -> bool {
@@ -278,5 +304,46 @@ tokenize_test!(
         Token::new(Decimal, 6),
         Token::new(Unknown, 1),
         Token::new(Integer, 1)
+    ]
+);
+
+// String literal tests.
+
+tokenize_test!(
+    it_tokenizes_the_empty_string,
+    "\"\"",
+    [Token::new(QuotedString { terminated: true }, 2)]
+);
+
+tokenize_test!(
+    it_tokenizes_a_string_with_linefeed,
+    "\"\n\"",
+    [
+        Token::new(QuotedString { terminated: false }, 2),
+        Token::new(QuotedString { terminated: false }, 1)
+    ]
+);
+
+tokenize_test!(
+    it_tokenizes_a_string_with_carriage_return,
+    "\"\r\"",
+    [
+        Token::new(QuotedString { terminated: false }, 2),
+        Token::new(QuotedString { terminated: false }, 1)
+    ]
+);
+
+tokenize_test!(
+    it_tokenizes_a_string_with_an_escaped_quote,
+    "\"\\\"\"",
+    [Token::new(QuotedString { terminated: true }, 4)]
+);
+
+tokenize_test!(
+    it_tokenizes_a_string_with_an_unescaped_quote,
+    "\"\"\"",
+    [
+        Token::new(QuotedString { terminated: true }, 2),
+        Token::new(QuotedString { terminated: false }, 1)
     ]
 );
