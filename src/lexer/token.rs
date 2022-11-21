@@ -23,7 +23,6 @@ pub enum TokenKind {
     Int(isize),
     Float(f64),
     Str(String),
-    InvalidStr(StrError, usize),
     OpenBracket,
     CloseBracket,
     OpenSquare,
@@ -33,11 +32,13 @@ pub enum TokenKind {
     True,
     False,
     Null,
+    /// Parser will never see Whitespace tokens
     Whitespace,
     /// Not part of spec
-    Eof,
+    InvalidStr(StrError, usize),
     InvalidIdent(String),
     Unknown(String),
+    Eof,
 }
 
 #[derive(Debug, Clone, PartialEq)]

@@ -1,8 +1,8 @@
 mod base;
-mod token;
+pub mod token;
 
 use base::{unescape, Cursor};
-use token::{Span, StrError, Token, TokenKind};
+pub use token::{Span, StrError, Token, TokenKind};
 
 pub fn tokenize(input: &str) -> impl Iterator<Item = (Token, bool)> + '_ {
     let mut tokenizer = Tokenizer::new(input);
@@ -17,14 +17,14 @@ pub fn tokenize(input: &str) -> impl Iterator<Item = (Token, bool)> + '_ {
     })
 }
 
-struct Tokenizer<'a> {
+pub struct Tokenizer<'a> {
     pos: usize,
     input: &'a str,
     cursor: Cursor<'a>,
 }
 
 impl<'a> Tokenizer<'a> {
-    fn new(input: &'a str) -> Self {
+    pub fn new(input: &'a str) -> Self {
         Self {
             pos: 0,
             input,
@@ -34,7 +34,7 @@ impl<'a> Tokenizer<'a> {
 
     /// Returns the next token, paired with a bool indicating if the token was
     /// preceded by whitespace.
-    fn next_token(&mut self) -> (Token, bool) {
+    pub fn next_token(&mut self) -> (Token, bool) {
         let mut preceded_by_whitespace = false;
 
         loop {
@@ -125,6 +125,19 @@ impl<'a> Tokenizer<'a> {
 
     fn str_from_to(&self, start: usize, end: usize) -> &str {
         &self.input[start..end]
+    }
+}
+
+impl<'a> Iterator for Tokenizer<'a> {
+    type Item = (Token, bool);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let (token, whitespace) = self.next_token();
+        if matches!(token.kind, token::Eof) {
+            None
+        } else {
+            Some((token, whitespace))
+        }
     }
 }
 

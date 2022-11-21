@@ -1,5 +1,11 @@
 #[derive(Debug, PartialEq, PartialOrd)]
 pub enum Node {
-    Int(i32),
-    Float(f32),
+    Object(Vec<(String, Node)>),
+    Array(Vec<Node>),
+    Str(String),
+    Int(isize),
+    Float(f64),
+    True,
+    False,
+    Null,
 }
