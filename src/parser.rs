@@ -145,7 +145,7 @@ impl<'a> Parser<'a> {
         self.eat_open_square()?;
         let token = self.peek()?;
         let items: Vec<Node> = match token.kind {
-            token::CloseBracket => vec![],
+            token::CloseSquare => vec![],
             _ => self.elements()?,
         };
         self.eat_close_square()?;
