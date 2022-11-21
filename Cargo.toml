@@ -3,8 +3,15 @@ name = "jason"
 version = "0.1.0"
 edition = "2021"
 
+[lib]
+name = "jason"
+path = "src/lib.rs"
+
+[[bin]]
+name = "scratch"
+path = "src/bin.rs"
+
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-anyhow = "1.0.66"
 unicode-xid = "0.2.4"

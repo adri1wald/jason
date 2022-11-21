@@ -9,8 +9,9 @@ use crate::lexer::{
 
 use self::ParseErrorKind::*;
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum ParseErrorKind {
+    UnexpectedContinuation(TokenKind),
     UnexpectedEof,
     UnexpectedToken(TokenKind),
     InvalidStr(StrError),
@@ -18,7 +19,7 @@ pub enum ParseErrorKind {
     UnknownToken(String),
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct ParseError {
     pub kind: ParseErrorKind,
     pub span: Span,
@@ -37,6 +38,10 @@ impl ParseError {
         }
     }
 
+    fn unexpected_continuation(token: Token) -> Self {
+        Self::new(UnexpectedContinuation(token.kind), token.span)
+    }
+
     fn from_token(token: Token) -> Self {
         match token.kind {
             token::InvalidStr(err, offset) => {
@@ -52,7 +57,7 @@ impl ParseError {
     }
 }
 
-pub fn parse_json(input: &str) -> Result<Node, ParseError> {
+pub fn parse(input: &str) -> Result<Node, ParseError> {
     let mut parser = Parser::new(input);
     let res = parser.parse();
     res
@@ -71,7 +76,9 @@ impl<'a> Parser<'a> {
     }
 
     fn parse(&mut self) -> Result<Node, ParseError> {
-        self.json()
+        let node = self.json()?;
+        self.end()?;
+        Ok(node)
     }
 
     fn json(&mut self) -> Result<Node, ParseError> {
@@ -80,7 +87,7 @@ impl<'a> Parser<'a> {
 
     fn value(&mut self) -> Result<Node, ParseError> {
         let token = self.peek()?;
-        let node = match &token.kind {
+        let node = match token.kind {
             token::OpenBracket => self.object()?,
             token::OpenSquare => self.array()?,
             token::Str(_) => self.string()?,
@@ -272,6 +279,13 @@ impl<'a> Parser<'a> {
         match self.tokenizer.next() {
             Some((token, _)) => Ok(token),
             None => Err(ParseError::unexpected_eof(&self.input)),
+        }
+    }
+
+    fn end(&mut self) -> Result<(), ParseError> {
+        match self.tokenizer.next() {
+            None => Ok(()),
+            Some((token, _)) => Err(ParseError::unexpected_continuation(token)),
         }
     }
 }
