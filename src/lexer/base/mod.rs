@@ -1,4 +1,5 @@
 mod cursor;
+pub mod unescape;
 
 pub use cursor::Cursor;
 
@@ -18,9 +19,9 @@ impl Token {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum TokenKind {
-    Integer,
-    Decimal,
-    QuotedString {
+    Int,
+    Float,
+    Str {
         terminated: bool,
     },
     OpenBracket,
@@ -34,19 +35,6 @@ pub enum TokenKind {
     /// Not part of spec
     Eof,
     Unknown,
-}
-
-/// Creates an iterator that produces tokens from the input string
-pub fn tokenize(input: &str) -> impl Iterator<Item = Token> + '_ {
-    let mut cursor = Cursor::new(input);
-    std::iter::from_fn(move || {
-        let token = cursor.advance_token();
-        if token.kind != Eof {
-            Some(token)
-        } else {
-            None
-        }
-    })
 }
 
 pub fn is_id_start(c: char) -> bool {
@@ -94,7 +82,7 @@ impl Cursor<'_> {
             // String literal.
             '"' => {
                 let terminated = self.double_quoted_string();
-                QuotedString { terminated }
+                Str { terminated }
             }
             _ => Unknown,
         };
@@ -138,7 +126,7 @@ impl Cursor<'_> {
             if !has_digits {
                 // Just a 0.
                 // E.g. JSON spec says `000` and `001` are invalid.
-                return Integer;
+                return Int;
             }
         } else {
             self.eat_decimal_digits();
@@ -154,42 +142,42 @@ impl Cursor<'_> {
                             '0'..='9' => {
                                 self.bump();
                                 self.eat_decimal_digits();
-                                Decimal
+                                Float
                             }
                             '+' | '-' => match self.third() {
                                 '0'..='9' => {
                                     self.bump();
                                     self.bump();
                                     self.eat_decimal_digits();
-                                    Decimal
+                                    Float
                                 }
-                                _ => Decimal,
+                                _ => Float,
                             },
-                            _ => Decimal,
+                            _ => Float,
                         },
-                        _ => Decimal,
+                        _ => Float,
                     }
                 }
-                _ => Integer,
+                _ => Int,
             },
             'e' | 'E' => match self.second() {
                 '0'..='9' => {
                     self.bump();
                     self.eat_decimal_digits();
-                    Decimal
+                    Float
                 }
                 '+' | '-' => match self.third() {
                     '0'..='9' => {
                         self.bump();
                         self.bump();
                         self.eat_decimal_digits();
-                        Decimal
+                        Float
                     }
-                    _ => Integer,
+                    _ => Int,
                 },
-                _ => Integer,
+                _ => Int,
             },
-            _ => Integer,
+            _ => Int,
         }
     }
 
@@ -232,6 +220,18 @@ macro_rules! tokenize_test {
         #[cfg(test)]
         #[test]
         fn $name() {
+            pub fn tokenize(input: &str) -> impl Iterator<Item = Token> + '_ {
+                let mut cursor = Cursor::new(input);
+                std::iter::from_fn(move || {
+                    let token = cursor.advance_token();
+                    if token.kind != Eof {
+                        Some(token)
+                    } else {
+                        None
+                    }
+                })
+            }
+
             let mut token_iterator = tokenize($input);
 
             for token in $tokens {
@@ -255,12 +255,12 @@ tokenize_test!(it_tokenizes_invalid_ident, "potato", [Token::new(Ident, 6)]);
 
 // Numeric literal tests.
 
-tokenize_test!(it_tokenizes_an_integer, "420", [Token::new(Integer, 3)]);
+tokenize_test!(it_tokenizes_an_integer, "420", [Token::new(Int, 3)]);
 
 tokenize_test!(
     it_tokenizes_a_negative_integer,
     "-1600",
-    [Token::new(Integer, 5)]
+    [Token::new(Int, 5)]
 );
 
 tokenize_test!(
@@ -268,62 +268,62 @@ tokenize_test!(
     " 69\n \r",
     [
         Token::new(Whitespace, 1),
-        Token::new(Integer, 2),
+        Token::new(Int, 2),
         Token::new(Whitespace, 3)
     ]
 );
 
-tokenize_test!(it_tokenizes_a_decimal, "3.14", [Token::new(Decimal, 4)]);
+tokenize_test!(it_tokenizes_a_decimal, "3.14", [Token::new(Float, 4)]);
 
 tokenize_test!(
     it_tokenizes_a_negative_decimal,
     "-0.618",
-    [Token::new(Decimal, 6)]
+    [Token::new(Float, 6)]
 );
 
 tokenize_test!(
     it_tokenizes_two_zeros,
     "00",
-    [Token::new(Integer, 1), Token::new(Integer, 1)]
+    [Token::new(Int, 1), Token::new(Int, 1)]
 );
 
 tokenize_test!(
     it_tokenizes_a_integer_with_lone_period,
     "1.",
-    [Token::new(Integer, 1), Token::new(Unknown, 1)]
+    [Token::new(Int, 1), Token::new(Unknown, 1)]
 );
 
 tokenize_test!(
     it_tokenizes_a_number_with_expontent,
     "0E000",
-    [Token::new(Decimal, 5)]
+    [Token::new(Float, 5)]
 );
 
 tokenize_test!(
     it_tokenizes_a_number_with_negative_expontent,
     "1.125e-5",
-    [Token::new(Decimal, 8)]
+    [Token::new(Float, 8)]
 );
 
 tokenize_test!(
     it_tokenizes_a_number_with_positive_expontent,
     "-5e+20",
-    [Token::new(Decimal, 6)]
+    [Token::new(Float, 6)]
 );
 
 tokenize_test!(
     it_tokenizes_a_number_with_lone_expontent,
     "-0.12E",
-    [Token::new(Decimal, 5), Token::new(Ident, 1)]
+    [Token::new(Float, 5), Token::new(Ident, 1)]
 );
 
 tokenize_test!(
     it_tokenizes_a_number_with_decimal_expontent,
     "12.0e1.0",
     [
-        Token::new(Decimal, 6),
+        Token::new(Float, 6),
         Token::new(Unknown, 1),
-        Token::new(Integer, 1)
+        Token::new(Int, 1)
     ]
 );
 
@@ -332,39 +332,33 @@ tokenize_test!(
 tokenize_test!(
     it_tokenizes_the_empty_string,
     "\"\"",
-    [Token::new(QuotedString { terminated: true }, 2)]
+    [Token::new(Str { terminated: true }, 2)]
 );
 
 tokenize_test!(
     it_tokenizes_a_string_with_linefeed,
     "\"\n\"",
-    [
-        Token::new(QuotedString { terminated: false }, 2),
-        Token::new(QuotedString { terminated: false }, 1)
-    ]
+    [Token::new(Str { terminated: true }, 3)]
 );
 
 tokenize_test!(
     it_tokenizes_a_string_with_carriage_return,
     "\"\r\"",
-    [
-        Token::new(QuotedString { terminated: false }, 2),
-        Token::new(QuotedString { terminated: false }, 1)
-    ]
+    [Token::new(Str { terminated: true }, 3)]
 );
 
 tokenize_test!(
     it_tokenizes_a_string_with_an_escaped_quote,
     "\"\\\"\"",
-    [Token::new(QuotedString { terminated: true }, 4)]
+    [Token::new(Str { terminated: true }, 4)]
 );
 
 tokenize_test!(
     it_tokenizes_a_string_with_an_unescaped_quote,
     "\"\"\"",
     [
-        Token::new(QuotedString { terminated: true }, 2),
-        Token::new(QuotedString { terminated: false }, 1)
+        Token::new(Str { terminated: true }, 2),
+        Token::new(Str { terminated: false }, 1)
     ]
 );
 
